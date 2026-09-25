@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:17
+    container_name: chargeops-db
+    environment:
+      POSTGRES_DB: chargeops
+      POSTGRES_USER: ops_owner
+      # Dev only, localhost only, synthetic data. The credential that matters
+      # is the read-only one the server uses — that lives in .env.
+      POSTGRES_PASSWORD: dev_only_not_a_secret
+    ports:
+      - "5434:5432"
+    volumes:
+      - chargeops_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ops_owner -d chargeops"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  chargeops_pgdata:
