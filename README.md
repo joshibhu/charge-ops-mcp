@@ -14,6 +14,9 @@ invented.
 32 stations · 9,252 sessions · 86 faults · 8 cities
 ```
 
+See also **[GLOSSARY.md](GLOSSARY.md)** — every term I met across both
+repos, with the moment I met it. Updated as new ones turn up.
+
 This README doubles as my learning log — what was built, the concepts worth
 keeping, and the bugs worth remembering. Week 1 lives in a separate repo
 (`ai-sprint`); this is Week 2.
