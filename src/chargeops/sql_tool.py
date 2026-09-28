@@ -11,11 +11,12 @@ stations(id, code, name, operator, city, state, connectors,
          power_kw, connector_type, status, commissioned_on)
     status: 'live' | 'maintenance' | 'planned'
 
-sessions(id, station_id, connector_no, started_at, ended_at,
-         energy_kwh, amount_inr, payment_status,
-         driver_name, driver_phone, driver_email, vehicle_reg)
+sessions_safe(id, station_id, connector_no, started_at, ended_at,
+              energy_kwh, amount_inr, payment_status,
+              driver_name, driver_phone, driver_email, vehicle_reg)
     payment_status: 'paid' | 'failed' | 'pending'
     ended_at/energy_kwh/amount_inr are NULL for sessions that never finished
+    driver_* and vehicle_reg are ALREADY MASKED and cannot be unmasked
 
 faults(id, station_id, connector_no, code, description,
        severity, raised_at, resolved_at)

@@ -26,7 +26,7 @@ def network_summary() -> str:
                count(*) FILTER (WHERE ended_at IS NULL)          AS unfinished,
                COALESCE(round(sum(energy_kwh)::numeric / 1000, 1), 0) AS mwh,
                COALESCE(round(sum(amount_inr)::numeric, 0), 0)   AS revenue
-        FROM sessions
+        FROM sessions_safe
         WHERE started_at >= now() - interval '30 days'
     """)[0]
 
@@ -86,7 +86,7 @@ def needs_attention(limit: int = 8) -> str:
                    count(*)                                           AS sessions_30d,
                    count(*) FILTER (WHERE payment_status = 'failed')  AS failed_30d,
                    count(*) FILTER (WHERE ended_at IS NULL)           AS unfinished_30d
-            FROM sessions
+            FROM sessions_safe
             WHERE started_at >= now() - interval '30 days'
             GROUP BY station_id
         ),
@@ -174,7 +174,7 @@ def site_detail(site: str) -> str:
                COALESCE(round(sum(amount_inr)::numeric, 0), 0)    AS revenue,
                COALESCE(round(avg(EXTRACT(epoch FROM ended_at - started_at)/60)::numeric, 0), 0)
                                                                   AS avg_minutes
-        FROM sessions
+        FROM sessions_safe
         WHERE station_id = %s AND started_at >= now() - interval '30 days'
         """,
         (s["id"],),
@@ -222,7 +222,7 @@ def city_breakdown() -> str:
                    count(*) FILTER (WHERE x.payment_status='failed') AS failed,
                    COALESCE(sum(x.energy_kwh), 0)                    AS kwh,
                    COALESCE(sum(x.amount_inr), 0)                    AS revenue
-            FROM sessions x JOIN stations s ON s.id = x.station_id
+            FROM sessions_safe x JOIN stations s ON s.id = x.station_id
             WHERE x.started_at >= now() - interval '30 days'
             GROUP BY s.city
         ),

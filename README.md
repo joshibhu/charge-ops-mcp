@@ -266,4 +266,149 @@ that sentence the most load-bearing line in the server.
 
 ---
 
-*Days 11–14 to follow.*
+## Day 11 — Personal data must not reach the model
+
+**Built:** masking at the boundary, then — when that turned out to be
+defeatable — a masked view with the raw table revoked, plus 9 tests including
+two that assert a database grant.
+
+**The hole, before anything was built**
+
+```sql
+SELECT driver_name, driver_phone, driver_email, vehicle_reg FROM sessions LIMIT 3
+```
+
+Real-looking names, mobile numbers, email addresses and registrations, sent to
+a third-party API. Synthetic data here; the mechanism entirely real.
+
+**Why it matters more than it feels**
+
+- **It left the building.** Under the DPDP Act or GDPR, *sending* customer
+  personal data to a processor you have not contracted for it is the
+  violation — not "the model misused it".
+- **It cannot be un-sent.** Provider logs, retention windows, abuse review.
+- **It lands in my own logs.** Every tool result gets logged somewhere, so
+  driver phone numbers end up in the error tracker and the log aggregator —
+  systems with far looser access control than the database they came from.
+- **It is the first question a client asks**, and "probably not much" is not
+  an answer.
+
+**Where to mask — three candidates, one right answer**
+
+| Place | Why it fails / works |
+|---|---|
+| In the SQL | `run_sql` means the MODEL writes the query. It cannot be made to remember. |
+| At the chat layer | Too late — the data already crossed the boundary to reach the model. |
+| At the data-access boundary | One place, covers every tool including next year's. |
+
+So: mask in `db.query()`. Safe by **default** rather than by memory.
+
+**Masking that keeps the data useful**
+
+Total redaction destroys it — `***` everywhere and you can no longer tell two
+sessions apart or spot one driver with forty failed payments. Keep the shape,
+lose the identity:
+
+    Divya Kulkarni              -> D*** K***
+    +919572623548               -> +91*****3548      last 4 match a ticket
+    divya.k15@example.com       -> d***@example.com  domain kept on purpose
+    GJ01CC1814                  -> GJ01****1814      state + district survive
+
+Edge cases fail **toward** `***`, never toward the original. `None` stays
+`None` — a NULL is not personal data.
+
+**What bit me — and it is the main lesson of the day**
+
+The boundary masking was **completely defeated**, four ways:
+
+    SELECT driver_name AS city          -> Diya Iyer
+    SELECT upper(driver_name)           -> DIYA IYER
+    SELECT driver_name || driver_phone  -> Diya Iyer +918375181648
+    SELECT substring(driver_phone from 4)-> 8375181648
+
+Masking keys on the output **column name**, and with `run_sql` the model
+chooses the names. This is not a bug I could patch with more field names:
+
+> **Any name-based control fails when the other side chooses the names.**
+
+The fix was not a better filter. It was moving from **filtering** to
+**absence** — a view where the masking is already applied in SQL, and the raw
+table revoked from `ops_reader` entirely. Then renaming a masked value just
+renames a masked value; there is nothing left to unmask. Verified by
+bypassing my own guard and hitting the table directly:
+`permission denied for table sessions`.
+
+**Third time this pattern has appeared**
+
+| Day | I built a filter | What actually held |
+|---|---|---|
+| 6 | dispatcher rejects unknown tool names | the read-only role |
+| 10 | AST guard blocks dangerous SQL | `permission denied for function pg_read_file` |
+| 11 | mask personal columns by name | `permission denied for table sessions` |
+
+Every time my Python was layer 1 and **Postgres was the layer that held.**
+
+**Views, and why they give more control than they look like they do**
+
+- **Not a copy — a stored query.** An `UPDATE` to the table shows in the view
+  instantly; nothing to refresh. (A *materialised* view is a copy, and does.)
+- **New columns are invisible.** The view names its columns explicitly, so a
+  `driver_aadhaar` added later is unreachable from the moment it exists —
+  safe by default, with nobody remembering anything.
+- **Row filtering is a permission boundary.** A `WHERE st.operator = ...` in
+  the view means one operator's assistant physically cannot see another's
+  sessions. For a multi-tenant CSMS that is the difference between a
+  sellable product and a liability. (Add `WITH (security_barrier = true)`
+  when a view filters rows rather than just hiding columns; Postgres views
+  are not a security barrier by default.)
+- **The grant is what makes it real.** A view hides nothing from a role that
+  can still read the underlying table.
+- Postgres also refused to let me `DROP` a column the view depended on — a
+  dependency safety net I did not build.
+
+**The reframe worth keeping:** stop guarding SQL against the real schema.
+**Give the model its own schema** — a purpose-built view layer, safe by
+construction. Not "everything readable, guard filters" but "nothing readable,
+views grant".
+
+**The tests are the actual deliverable**
+
+Masking code is easy. Guaranteeing nobody reopens the hole in six months is
+not. Two things will realistically do it, and neither raises an error:
+
+1. someone adds a personal column to `sessions_safe` for a report
+2. a migration runs `GRANT SELECT ON ALL TABLES IN SCHEMA public`
+
+So the suite asserts both — including **a test that asserts a database
+grant**, which most codebases have no equivalent of:
+
+```python
+has_table_privilege('ops_reader', 'sessions', 'SELECT') is False
+```
+
+and a heuristic that flags any column whose *name* looks personal
+(`name`, `phone`, `aadhaar`, `pan`, `dob`, ...) unless it has a masker.
+
+**I then broke it both ways and watched the tests fail**, because a test that
+has never failed is a test I cannot trust. Sabotage 1 was caught by two tests
+naming the offending column; sabotage 2 by the permission test, which
+suggested its own cause ("check migrations for GRANT ... ON ALL TABLES").
+
+**What I can now say to a client**
+
+> Driver names, phones and emails never leave our process. Not masked on the
+> way out — the service's login physically cannot read those columns, and a
+> test fails the build if anyone re-grants it.
+
+A permission plus a regression test, not a policy.
+
+**Run**
+
+```bash
+uv run pytest                          # 9 tests
+uv run pytest -m "not integration"     # none yet — all 9 need the database
+```
+
+---
+
+*Days 12–14 to follow.*

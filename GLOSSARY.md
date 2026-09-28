@@ -68,6 +68,15 @@ a paragraph, it belongs in a README day-note and this row should point at it.
 | **Timing attack** | `secrets.compare_digest`, not `==`. A plain comparison leaks a secret one character at a time. | D8 |
 | **Bearer token** | Shared secret in an `Authorization` header. Static tokens cannot be scoped, expired or revoked per client. | D8 |
 | **Blast radius** | What a compromised or buggy component can reach. For an MCP client, the tool list. | D8 |
+| **Any name-based control fails when the other side chooses the names** | Masking keyed on column name; `SELECT driver_name AS city` defeated it entirely. | D11 |
+| **Filtering vs absence** | Don't hide the value — make it unreachable. A view plus REVOKE, not a mask. | D11 |
+| **View as a permission boundary** | Grants apply to the view; the role loses the table. Column hiding, row filtering, pre-applied masking. | D11 |
+| **`security_barrier`** | Postgres views are not a security barrier by default; needed when a view filters rows. | D11 |
+| **Row-Level Security (RLS)** | Per-row policies on the table itself, enforced however the data is reached. The heavier tool once you have real tenants. | D11, mentioned |
+| **Give the model its own schema** | Not your tables — a purpose-built view layer, safe by construction. | D11 |
+| **Masking vs anonymisation** | Masking stops raw identifiers leaving the process; it does not prevent re-identification by someone holding the original. | D11 |
+| **Partial masking** | Keep the shape, lose the identity: last 4 digits, the email domain, the state code. Total redaction destroys the data. | D11 |
+| **DPDP Act / GDPR** | Sending customer personal data to an uncontracted processor IS the violation. | D11 |
 | **Statement timeout** | A runaway query cannot pin the database. | D6 — 8s on `ops_reader` |
 | **Row cap** | One careless query must not drag 9,000 rows into a model's context and your bill. | D6, D10 — 200 rows |
 
@@ -94,6 +103,10 @@ a paragraph, it belongs in a README day-note and this row should point at it.
 | **`FILTER (WHERE ...)`** | Several conditional counts from one pass over the table. | D9 |
 | **`COALESCE`** | `sum()` returns NULL, not zero, on no rows. | D9 |
 | **Adjacency reads as causation** | Two facts side by side invite a causal story nobody checks the dates on. | D9 — open fault next to zero sessions |
+| **A test that asserts a database grant** | `has_table_privilege(...) is False` — fails the build when a migration widens access. | D11 |
+| **A test that has never failed cannot be trusted** | Sabotage it deliberately and watch it catch the thing. | D11 — two sabotages |
+| **Safe by default vs safe by vigilance** | A new column invisible unless exposed, beats a new column leaking unless remembered. | D11 |
+| **Idempotent transform** | `mask()` leaves an already-masked value alone, so layers compose instead of mangling. | D11 |
 | **Invisible policy** | A curated tool can embed a judgment (weights, a hardcoded filter) that neither model nor user can see. | D6, D9 |
 
 ## 5. MCP
@@ -136,6 +149,9 @@ a paragraph, it belongs in a README day-note and this row should point at it.
 | **Over-specified assertion** | A test that asserts more than the behaviour you care about, and fails on correct code. | D7 — compared a header that echoes input |
 | **List comprehension** | `stream().map().toList()`. | D6 |
 | **`"".join(parts)`** | String concat in a loop is O(n²). `StringBuilder`'s reason. | D2 |
+| **View vs materialised view** | A view is a stored query (always live); a materialised view is a copy and needs refreshing. | D11 |
+| **View dependency** | Postgres refuses to drop a column a view uses — a safety net you get for free. | D11 |
+| **No opt-out parameter** | An `unmasked=True` flag gets copied around and becomes the default by accident. Add a separate explicit function instead. | D11 |
 | **ASGI middleware** | Wraps the app to check auth before anything reaches it. | D8 |
 
 ---

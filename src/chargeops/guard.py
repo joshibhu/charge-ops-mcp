@@ -14,7 +14,11 @@ DIALECT = "postgres"
 
 # The only tables a query may touch. An ALLOW-list: anything not named here
 # is refused, including pg_authid, pg_class and every other system table.
-ALLOWED_TABLES = {"stations", "sessions", "faults"}
+#
+# Note `sessions_safe`, NOT `sessions`. The raw table carries unmasked driver
+# data and ops_reader has no grant on it — this line and the REVOKE in
+# db/03_safe_views.sql are two independent controls saying the same thing.
+ALLOWED_TABLES = {"stations", "sessions_safe", "faults"}
 
 # Statement types that change data or reach outside it. This is a block-list,
 # which I argued against — but it is over sqlglot's CLOSED set of known node
