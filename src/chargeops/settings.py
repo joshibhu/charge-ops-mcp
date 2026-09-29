@@ -37,5 +37,14 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     browser_token_minutes: int = 15
 
+    # Host headers the MCP server will accept, comma-separated.
+    #
+    # The SDK validates Host against an allow-list to stop DNS REBINDING: a
+    # malicious page resolving its own domain to 127.0.0.1 and then talking
+    # to a local MCP server from the victim's browser. The default is
+    # localhost only — correct for a laptop, and it refuses every request
+    # inside Docker, where the host header is a service name ("mcp:8765").
+    allowed_hosts: str = "127.0.0.1:8765,localhost:8765"
+
 
 settings = Settings()

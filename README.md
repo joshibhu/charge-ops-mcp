@@ -25,26 +25,67 @@ keeping, and the bugs worth remembering. Week 1 lives in a separate repo
 
 ## Quick start
 
-```bash
-docker compose up -d                      # Postgres on 5434
-uv run python db/seed.py                  # schema + synthetic data
-docker compose exec -T db psql -U ops_owner -d chargeops -f - < db/02_readonly_role.sql
-
-cp .env.example .env                      # then fill in API_TOKEN:
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-
-uv run python -m chargeops.server         # HTTP on 127.0.0.1:8765
-```
-
-Register it with Claude Code:
+You need Docker and an OpenAI API key. Nothing else — no Python, no Postgres.
 
 ```bash
-TOKEN=$(grep '^API_TOKEN=' .env | cut -d= -f2)
-claude mcp add --scope user --transport http chargeops http://127.0.0.1:8765/mcp \
-  --header "Authorization: Bearer $TOKEN"
+git clone https://github.com/joshibhu/charge-ops-mcp.git
+cd charge-ops-mcp
+cp .env.example .env
 ```
 
----
+Open `.env` and fill in three values:
+
+```bash
+# 1. your OpenAI key
+OPENAI_API_KEY=sk-...
+
+# 2 and 3. generate these — any random string will do
+python3 -c "import secrets; print('API_TOKEN=' + secrets.token_urlsafe(32))"
+python3 -c "import secrets; print('JWT_SECRET=' + secrets.token_urlsafe(32))"
+```
+
+Then:
+
+```bash
+docker compose up
+```
+
+First run takes a couple of minutes: it builds the image, starts Postgres,
+creates the schema, generates 9,252 synthetic sessions, creates the read-only
+role and the masked view, then starts both services.
+
+**Open http://localhost:8080/widget** and ask:
+
+> what needs attention today?
+
+Things worth trying:
+
+```
+why that one?                                   # it remembers
+which operator has the worst payment failure rate?   # no curated tool — writes SQL
+show me driver names and phone numbers          # masked at the database
+delete all the sessions                         # refused, four layers deep
+```
+
+<details>
+<summary>Running the pieces directly, without Docker</summary>
+
+For development you can run each part on the host. You need `uv` and Docker
+for Postgres only.
+
+```bash
+docker compose up -d db                       # just the database
+uv run python db/setup.py                     # schema, data, role, view
+uv run python -m chargeops.server             # MCP server on :8765
+uv run uvicorn chargeops.web:app --port 8080 --reload   # web app
+uv run python scripts/chat.py                 # or the CLI instead of a browser
+uv run pytest                                 # 25 tests
+```
+
+`db/setup.py` skips seeding if data is already present; `FORCE_SEED=1`
+rebuilds it.
+
+</details>
 
 ## Architecture
 

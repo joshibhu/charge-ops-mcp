@@ -1,22 +1,103 @@
+name: chargeops
+
+# Four services, started in order by health rather than by hope:
+#
+#   db     Postgres
+#   setup  one-shot: schema, synthetic data, read-only role, masked view
+#   mcp    the MCP server — tools, guard, read-only database access
+#   web    the browser front end — mints short-lived tokens, streams answers
+#
+# Only `web` publishes a port to the host. `mcp` is reachable on the internal
+# network and nowhere else, which is the right default for a service whose
+# only client is another service.
+
 services:
+
   db:
     image: postgres:17
-    container_name: chargeops-db
     environment:
       POSTGRES_DB: chargeops
       POSTGRES_USER: ops_owner
-      # Dev only, localhost only, synthetic data. The credential that matters
-      # is the read-only one the server uses — that lives in .env.
+      # Dev only. This database holds synthetic data and, below, is not
+      # published to the host at all. The credential that matters is
+      # OPENAI_API_KEY, which comes from .env and is never in this file.
       POSTGRES_PASSWORD: dev_only_not_a_secret
-    ports:
-      - "5434:5432"
     volumes:
-      - chargeops_pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ops_owner -d chargeops"]
-      interval: 2s
+      interval: 3s
       timeout: 3s
       retries: 20
+    ports:
+      # Published so host-side `pytest` and DBeaver can reach it. Only
+      # defensible because this database holds synthetic data — a real one
+      # would stay on the internal network, and the tests would run in a
+      # container alongside it.
+      - "127.0.0.1:5434:5432"
+
+  setup:
+    build: .
+    command: python db/setup.py
+    environment:
+      # The OWNER role — the only service that uses it. Everything else
+      # connects as ops_reader and cannot write.
+      OWNER_DSN: postgresql://ops_owner:dev_only_not_a_secret@db:5432/chargeops
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"          # one-shot: it runs, it exits, it stays exited
+
+  mcp:
+    build: .
+    command: python -m chargeops.server
+    environment:
+      # `db`, not 127.0.0.1. Inside a container, localhost is THAT container —
+      # the single most common compose mistake, and it fails as "connection
+      # refused" rather than anything that names the cause.
+      DATABASE_URL: postgresql://ops_reader:reader_dev_password@db:5432/chargeops
+      HOST: 0.0.0.0        # inside the container, so compose can reach it
+      PORT: 8765
+      API_TOKEN: ${API_TOKEN:?set API_TOKEN in .env}
+      # Compose reaches this service as `mcp:8765`, so that Host header
+      # must be allowed. The SDK's default is localhost only — DNS
+      # rebinding protection, correct on a laptop, fatal in a container.
+      ALLOWED_HOSTS: mcp:8765,localhost:8765
+    depends_on:
+      db:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully   # wait for seeding to FINISH
+    healthcheck:
+      # The /health path is the one route the bearer-token middleware lets
+      # through unauthenticated — a health check that needs a secret is one
+      # the orchestrator cannot run.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8765/health',timeout=3).status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  web:
+    build: .
+    command: uvicorn chargeops.web:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"        # the only thing exposed to the host
+    environment:
+      MCP_URL: http://mcp:8765/mcp      # service name, not localhost
+      API_TOKEN: ${API_TOKEN:?set API_TOKEN in .env}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-nano}
+    depends_on:
+      mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health',timeout=3).status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 volumes:
-  chargeops_pgdata:
+  pgdata:

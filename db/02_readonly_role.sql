@@ -4,7 +4,17 @@
 -- Day 10) is code I wrote, and my code has bugs. This layer is Postgres
 -- refusing, which is why it is the one that holds.
 
-DROP ROLE IF EXISTS ops_reader;
+-- Idempotent. `DROP ROLE IF EXISTS` is NOT enough on a second run: once the
+-- role holds grants, Postgres refuses with "cannot be dropped because some
+-- objects depend on it". DROP OWNED removes those grants first.
+DO $$
+BEGIN
+    IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'ops_reader') THEN
+        EXECUTE 'DROP OWNED BY ops_reader';
+        EXECUTE 'DROP ROLE ops_reader';
+    END IF;
+END $$;
+
 CREATE ROLE ops_reader LOGIN PASSWORD 'reader_dev_password';
 
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ops_reader;

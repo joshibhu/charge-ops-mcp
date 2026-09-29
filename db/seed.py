@@ -18,8 +18,11 @@ from __future__ import annotations
 import os
 import random
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import psycopg
+
+HERE = Path(__file__).resolve().parent
 
 random.seed(42)  # reproducible: the same data every run
 
@@ -165,7 +168,7 @@ def make_faults(station_ids: list[tuple[int, int, float, str]]) -> list[tuple]:
 
 def main() -> None:
     with psycopg.connect(DSN, autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute(open("db/01_schema.sql").read())
+        cur.execute((HERE / "01_schema.sql").read_text())
 
         stations = make_stations()
         cur.executemany(

@@ -22,9 +22,18 @@ class BearerTokenMiddleware:
         self.app = app
         self.token = token
 
+    # Reachable without a credential. A health check that needs a secret is
+    # a health check your orchestrator cannot run, and it reveals nothing:
+    # it says the process is alive, which anyone can infer from the open port.
+    PUBLIC_PATHS = frozenset({"/health"})
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+
+        if scope.get("path") in self.PUBLIC_PATHS:
+            await JSONResponse({"status": "ok"})(scope, receive, send)
             return
 
         headers = dict(scope.get("headers") or [])

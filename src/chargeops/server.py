@@ -16,6 +16,7 @@ too late and the text silently never reaches the model.
 """
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .auth import BearerTokenMiddleware
 from .ops_tools import (
@@ -99,7 +100,13 @@ def build_app():
             "  python -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
             "and put it in .env as CHARGEOPS_API_TOKEN=..."
         )
-    return BearerTokenMiddleware(mcp.streamable_http_app(), settings.api_token)
+    hosts = [h.strip() for h in settings.allowed_hosts.split(",") if h.strip()]
+    return BearerTokenMiddleware(
+        mcp.streamable_http_app(
+            transport_security=TransportSecuritySettings(allowed_hosts=hosts)
+        ),
+        settings.api_token,
+    )
 
 
 if __name__ == "__main__":
