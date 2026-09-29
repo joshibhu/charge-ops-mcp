@@ -50,6 +50,11 @@ a paragraph, it belongs in a README day-note and this row should point at it.
 | **Sequential tool chain** | Round 2's arguments come from round 1's result. Impossible without a loop. | D5 — temperature, then doubled |
 | **`tool_call_id`** | Ties a result back to its request. Needed because several can be in flight. | D5 |
 | **Normal exit** | The model answering in plain text is *success*, not a missing case. | D5 — beginners code this as an error |
+| **Checkpointer** | Somewhere to keep the message list between calls. A dict, a file, a Postgres table. | D12 |
+| **`thread_id`** | The key the stored conversation is filed under. Two users, two threads. | D12 |
+| **Recursion limit** | A framework's name for MAX_ROUNDS. A ceiling, not a target. | D12 |
+| **History trimming** | Drop or summarise old turns so cost stops growing. The policy is a product decision. | D12 |
+| **Orphaned tool message** | A `tool` result whose assistant request was trimmed away. Rejects the WHOLE conversation with a 400. | D12 |
 | **Prompt injection** | Instructions hidden in data the model reads (a document, a database row). | D6 — it was ignored, not refused |
 
 ## 3. Security
@@ -122,6 +127,7 @@ a paragraph, it belongs in a README day-note and this row should point at it.
 | **`tools/list`** | Discovery. Returns `{name, description, inputSchema}` — the same dict I hand-wrote on D5. | D8 |
 | **`tools/call`** | Invocation. Result comes back as a list of content blocks, not a bare string. | D8 |
 | **`inputSchema`** | Generated from type hints by reflection at request time. Exists nowhere on disk. | D8 |
+| **Tools are fetched, not registered** | The client asks `tools/list` at startup. The server's name appears nowhere in the client — only a URL and a token. | D12 |
 | **Server scope** | `--scope local` works only in the directory it was registered from; `--scope user` everywhere. | D8 — commonest "it doesn't work" |
 | **Tool name prefix** | `mcp__chargeops__run_sql`. Prevents collisions; does nothing for *semantic* overlap. | D8 |
 | **Descriptions do the routing** | The model sees one flat list and picks on description. The protocol contributes nothing to that choice. | D10 — `run_sql` fired on "any question the other tools do not cover" |
@@ -133,6 +139,12 @@ a paragraph, it belongs in a README day-note and this row should point at it.
 |---|---|---|
 | **Decorator** | An annotation that has **already run** and may replace the function. `@x` is `f = x(f)`. | D8 — set `__doc__` after it, too late |
 | **Reflection** | How type hints and docstrings become a JSON schema. | D8 |
+| **Library vs framework** | A library you call; a framework calls you. Inversion of control — Jackson vs Spring, OpenAI SDK vs LangGraph. | D12 |
+| **`async` is contagious** | One async dependency makes every caller async. An architectural choice, not a local one. | D12 |
+| **`AsyncExitStack`** | Enter several context managers dynamically and unwind them correctly. Hand-rolling it broke anyio's task scoping. | D12 |
+| **`__aenter__` / `__aexit__`** | The `async with` protocol. Python's try-with-resources. | D12 |
+| **Spike** | A throwaway program that answers "will this work?", then gets deleted. XP term. | D12 |
+| **A long-running process holds the code it started with** | Three-day-old server still ran Day 10 code against a table Day 11 revoked. | D12 |
 | **`uv`** | Maven/Gradle. `uv add` to install, `uv run` to execute. Never `pip install`. | D1 |
 | **`pydantic`** | Jackson + Bean Validation in one. Validates and coerces at construction. | D1 |
 | **`pydantic-settings`** | `@ConfigurationProperties` bound to env vars. Fails at startup, not mid-request. | D1 |

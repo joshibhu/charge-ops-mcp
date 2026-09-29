@@ -411,4 +411,166 @@ uv run pytest -m "not integration"     # none yet — all 9 need the database
 
 ---
 
-*Days 12–14 to follow.*
+## Day 12 — Memory, and deciding not to use a framework
+
+**Built:** an assistant that talks to the MCP server over HTTP, remembers the
+conversation, and trims history to control cost. ~60 lines across four
+modules. **Zero server changes.**
+
+**The day started with a framework and ended without one**
+
+The plan said LangGraph. I led with its graph model — nodes, edges, a
+conditional loop — and got pushed back on: *"isn't this just persistence?
+aren't we already sending the whole history every message?"*
+
+Both true, and the second one is the insight. **LangGraph does not invent
+memory.** The mechanism is the same one I built on Day 2: keep the message
+list, resend it every turn. What a framework adds is a *place to keep the
+list between calls* and *a key to find it by*.
+
+Which is about fifteen lines:
+
+```python
+SESSIONS: dict[str, list[dict]] = {}          # thread_id -> messages
+messages = SESSIONS.setdefault(thread_id, [system_prompt])
+```
+
+That is a checkpointer. That is a thread_id.
+
+**Library vs framework, precisely.** A library you call; a framework calls
+you. LangGraph owns the control flow — you supply nodes, it decides what
+runs. Spring, not Jackson. Inversion of control. That matters because a
+library can be removed in an afternoon and a framework shapes the code
+around itself.
+
+So the honest accounting:
+
+| | Hand-rolled | Framework worth it? |
+|---|---|---|
+| Memory keyed by session | 15 lines | **no** |
+| Durable storage in Postgres | a table, some SQL | marginal |
+| Streaming intermediate steps | fiddly | maybe |
+| **Pause mid-run for approval, resume later** | genuinely hard | **yes** |
+
+Only the last needs the graph — you cannot pause a `while` loop across a web
+request, but you can pause a graph, record which node it stopped at, and
+resume tomorrow. **That is Day 24, not today.**
+
+**Where Claude Code stores THIS conversation**
+
+Chasing "where does the history actually live" landed somewhere useful:
+
+    ~/.claude/projects/<project>/<session-id>.jsonl      5.4 MB, 2,924 entries
+
+A plain file on my own disk, holding every message since Day 1. Claude Code
+reads it, sends the lot, appends the reply. The API is stateless (Day 2) —
+the only reason it knows what we discussed last week is that it is resending
+it, from a file, every time I press Enter.
+
+    Claude Code                    what I built
+    ───────────                    ────────────
+    sessionId                 ≈    thread_id
+    a .jsonl file             ≈    a dict (swap for Postgres)
+    read file, send all       ≈    load state, send all
+    append the reply          ≈    save state
+
+Same design, different words. Also explains why sessions do not follow me to
+another machine — and why syncing that directory is a bad idea: it contains
+every credential that ever appeared in command output.
+
+**Core concepts**
+
+- **The assistant is a CLIENT.** Everything from Days 8–11 sits on the far
+  side of an HTTP boundary and is unaware of it. First time I have written
+  the client side.
+- **Tools are fetched, not registered.** `tools/list` at startup, once. The
+  word `chargeops` appears **nowhere** in the client — it connects by URL and
+  a bearer token. Add a sixth tool to the server and the client sees it with
+  no change. That is the JDBC property.
+- **Two schema shapes for the same thing.** MCP puts it in `inputSchema` at
+  the top level; OpenAI wants `parameters` nested inside a `function` object.
+  `bridge.py` is eleven lines and the only file that knows both.
+- **`async` is contagious.** The MCP SDK is async, so the client is, so the
+  loop is, so the CLI is. Unlike a blocking call in Java, the choice
+  propagates outward through every caller — an architectural decision, not a
+  local one.
+- **MAX_ROUNDS is a ceiling, not a target.** The loop returns the moment the
+  model answers with text instead of a tool request — usually round 2. The
+  cap exists for the model that ping-pongs on a bad argument, where each lap
+  is a paid call with a longer history.
+
+**The subtle bug: trimming is NOT "keep the last N"**
+
+A `tool` message is only legal directly after an assistant message carrying
+`tool_calls`. A blind slice can start the window on an orphaned tool result,
+and the API rejects **the whole conversation** — the same 400 from Day 6, not
+a degraded answer. So the window is walked to a legal boundary at both ends:
+
+```python
+while window and window[0].get("role") == "tool":     window.pop(0)
+while window and window[-1].get("tool_calls"):        window.pop()
+```
+
+`while`, not `if` — the model can request three tools in one turn, producing
+three consecutive results. An `if` would fix one and leave two, and that
+version ships fine until the first multi-tool turn.
+
+Two tests construct a slice that lands on each case deliberately.
+
+**What bit me**
+
+`result.isError` — **camelCase on the wire, snake_case in Python** (`is_error`).
+The identical translation that bit me with `inputSchema` on Day 8, and I wrote
+the wire name again.
+
+And a worse one: I hand-rolled a list of context managers and unwound them in
+a `for` loop, which produced
+
+    RuntimeError: Attempted to exit cancel scope in a different task
+
+Both the transport and the session are anyio task groups and must be exited in
+the task that entered them. `contextlib.AsyncExitStack` is the stdlib answer to
+exactly this. General rule earned: **when the stdlib has a thing for your
+problem, the hand-rolled version is probably subtly wrong.**
+
+*Also, again:* the MCP server had been running for three days and still held
+the Day 10 code, which queries `FROM sessions` — a table Day 11 revoked. Every
+curated tool failed over MCP while working perfectly in-process. **A
+long-running process holds the code it started with**, and the error surfaces
+at the call site while the cause is a timestamp. Second time this week a stale
+process cost me a debugging session; `uvicorn --reload` fixes it in dev, and a
+container fixes it in production.
+
+**And one correction to my own record.** I had been citing "Day 5's agent
+cannot answer 'why that one?'" as a demonstrated fact across several messages.
+It was a prediction I never ran. Running it:
+
+    Day 5:   "I'm not sure what you're referring to by 'that one'."
+    Day 12:  explains BLR-001 from memory
+
+Now it is evidence. Twelve days of "suspect the measurement" and I was still
+repeating an unverified claim.
+
+**The honest limitation**
+
+Trimming **forgets** rather than summarises. Message 21 arrives and turn 1 is
+gone. The alternatives cost more: summarise old turns (an extra model call
+each time — what Claude Code does), or retrieve the relevant old turn on
+demand (RAG applied to history). **Which to use is a product decision, not a
+technical one** — what the assistant is allowed to forget is worth asking a
+client explicitly.
+
+**Run**
+
+```bash
+uv run python -m chargeops.server        # terminal 1
+uv run python scripts/chat.py            # terminal 2
+
+you> which site needs attention most urgently?
+you> why that one?                       # only works because of memory
+you> new                                 # forget the thread
+```
+
+---
+
+*Days 13–14 to follow.*

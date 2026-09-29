@@ -23,5 +23,13 @@ class Settings(BaseSettings):
     # Shared secret clients must present. Empty = no auth (see server.py).
     api_token: str = ""
 
+    # Where the assistant finds the MCP server. Same value the client passes
+    # to `claude mcp add`.
+    mcp_url: str = "http://127.0.0.1:8765/mcp"
+
+    # The assistant needs a model. The SERVER does not — it only runs SQL.
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5-nano"
+
 
 settings = Settings()
