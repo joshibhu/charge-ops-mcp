@@ -573,4 +573,127 @@ you> new                                 # forget the thread
 
 ---
 
-*Days 13–14 to follow.*
+## Day 13 — Streaming to a browser
+
+**Built:** an embeddable chat widget. Short-lived browser tokens, a web app
+that is *another client* of the MCP server, and answers that stream token by
+token over server-sent events. **Server untouched again.**
+
+```
+browser (widget.html)
+    |  JWT — 15 minutes, chat scope, visible in the page
+    v
+web app :8080          <- holds the real API_TOKEN
+    |  Bearer API_TOKEN
+    v
+MCP server :8765       <- guard, allow-list, LIMIT rewriting
+    |  ops_reader
+    v
+Postgres :5434         <- read-only role, masked view
+```
+
+**Core concepts**
+
+- **You cannot put a credential in a browser.** `view source` is all it
+  takes. So the browser never sees `API_TOKEN` — it gets a *different*
+  credential entirely:
+
+  |                | API_TOKEN            | browser token       |
+  |----------------|----------------------|---------------------|
+  | Lifetime       | forever              | 15 minutes          |
+  | Scope          | every tool incl. SQL | `chat` only         |
+  | Lives in       | `.env`, server-side  | the page, and that is fine |
+  | If stolen      | the database         | 15 min of questions |
+
+  The design is not "hide it well" but **"make the exposed one worthless."**
+
+- **A JWT is SIGNED, not encrypted.** Anyone can decode the payload — that is
+  expected, and a test pins it so nobody ever puts a secret in one. What they
+  cannot do is change it: alter the expiry and the signature stops matching.
+  The library enforces `exp`, so "we forgot to check the expiry" is not a bug
+  that can happen.
+
+- **A different secret from API_TOKEN.** Tempting to reuse — one fewer line in
+  `.env`. Don't: one is a bearer credential clients present, the other a
+  signing key only the server uses. Reuse them and anyone holding the API
+  token can forge browser sessions.
+
+- **SSE, not WebSocket.** A chat answer flows one way, so:
+
+  |              | SSE            | WebSocket            |
+  |--------------|----------------|----------------------|
+  | Direction    | server → client | both                |
+  | Protocol     | plain HTTP     | its own upgrade      |
+  | Reconnects   | automatically  | you write it         |
+  | Through proxies | usually fine | often blocked       |
+
+  And SSE is a *text format*, not a protocol: `data: {...}` followed by a
+  blank line. No handshake, no library.
+
+- **The web app is another MCP client.** Same `McpToolbox` the CLI uses. One
+  connection for the whole app (tool calls carry no per-user state, so it is a
+  connection pool), and one `Conversations` holding many threads. **Shared
+  connection, per-user state** — the distinction that makes a web app work.
+
+- **`thread_id` turned out to be the session key.** Day 12 built it for a CLI;
+  it is exactly what a web session needs. Proven: same token across two
+  separate HTTP requests remembers; a different token asking the same
+  follow-up says "I'm not sure which item you're referring to."
+
+- **CORS.** A browser refuses a cross-origin call unless the server says yes,
+  via a preflight `OPTIONS`. Without those headers the console blames CORS
+  while the network tab shows nothing was ever sent — which confuses everyone
+  once. `allow_origins=["*"]` is acceptable here only because the sole way in
+  is a token this app minted; production lists the customer's domains.
+
+**What bit me**
+
+**You cannot send a 500 once streaming has started.** The status line and
+headers are already gone. A failure mid-answer can only be reported as another
+event — `{"type": "error"}` — and the client has to know to handle it. That is
+a real departure from request/response, and it gets discovered in production
+when a tool times out halfway through an answer and the browser just stops.
+
+**`EventSource` cannot do this job.** The browser's built-in SSE client only
+issues GET and cannot set headers, so it cannot carry an Authorization token
+or a POST body. `fetch()` plus a stream reader is the way. People who do not
+know this work around it badly — putting the token in the query string, where
+it lands in every access log.
+
+**A network chunk can split an SSE event in half.** Works locally, where
+chunks happen to align; breaks under real conditions. The client splits on the
+blank line, processes complete events and **keeps the remainder**:
+
+```javascript
+const events = buffer.split("\n\n");
+buffer = events.pop();          // the incomplete tail
+```
+
+**`X-Accel-Buffering: no`.** nginx buffers responses by default, collecting the
+entire stream and delivering it in one lump — streaming that is not. A
+one-line header fixing a bug that only appears once deployed behind a proxy.
+
+**Streaming every round, not just the last.** You cannot know which round is
+last until you have seen it, so the loop streams all of them — which means
+reassembling `tool_call` fragments as well as text. The model sends a tool
+name and its arguments **in pieces, indexed, across many chunks**.
+
+**Run**
+
+```bash
+docker compose up -d                                            # database
+uv run python -m chargeops.server                               # MCP  :8765
+uv run uvicorn chargeops.web:app --port 8080 --reload            # web  :8080
+open http://127.0.0.1:8080/widget
+```
+
+**Known gaps**
+
+- `POST /session` has **no auth and no rate limit**. Anyone reachable can mint
+  tokens, and every token costs money to use.
+- `allow_origins=["*"]` — fine for a demo, wrong for production.
+- Sessions live in memory: a restart forgets every conversation.
+
+---
+
+*Day 14 to follow.*

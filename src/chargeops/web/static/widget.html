@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network assistant</title>
+<style>
+  :root { --bg:#fff; --ink:#111; --muted:#666; --line:#e4e4e7; --accent:#1a1a2e; }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; height:100vh; display:flex; flex-direction:column;
+    font:14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background:var(--bg); color:var(--ink);
+  }
+  header {
+    padding:12px 16px; border-bottom:1px solid var(--line);
+    font-weight:600; display:flex; justify-content:space-between; align-items:center;
+  }
+  header small { font-weight:400; color:var(--muted); }
+  #log { flex:1; overflow-y:auto; padding:16px; }
+  .msg { margin-bottom:14px; max-width:92%; }
+  .msg.you { margin-left:auto; text-align:right; }
+  .msg .who { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .msg .body { white-space:pre-wrap; word-wrap:break-word; }
+  .msg.you .body {
+    display:inline-block; background:var(--accent); color:#fff;
+    padding:8px 12px; border-radius:12px 12px 2px 12px; text-align:left;
+  }
+  .tool { font-size:12px; color:var(--muted); font-style:italic; margin-bottom:6px; }
+  .meta { font-size:11px; color:var(--muted); margin-top:4px; }
+  .error { color:#b00020; }
+  form { display:flex; gap:8px; padding:12px; border-top:1px solid var(--line); }
+  input {
+    flex:1; padding:10px 12px; border:1px solid var(--line);
+    border-radius:8px; font:inherit;
+  }
+  input:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+  button {
+    padding:10px 16px; border:0; border-radius:8px;
+    background:var(--accent); color:#fff; font:inherit; cursor:pointer;
+  }
+  button:disabled { opacity:.4; cursor:default; }
+</style>
+</head>
+<body>
+
+<header>
+  Charging network assistant
+  <small id="status">connecting…</small>
+</header>
+
+<div id="log"></div>
+
+<form id="form">
+  <input id="q" placeholder="What needs attention today?" autocomplete="off" disabled>
+  <button id="send" disabled>Ask</button>
+</form>
+
+<script>
+// The API base. When embedded on another site this points at YOUR server,
+// which is why the server needs CORS headers — see app.py.
+const API = location.origin;
+
+let token = null;
+const log = document.getElementById("log");
+const form = document.getElementById("form");
+const input = document.getElementById("q");
+const send = document.getElementById("send");
+const status = document.getElementById("status");
+
+// ── session ────────────────────────────────────────────────────────────────
+// The token lives in this page, in plain JavaScript, visible to anyone.
+// That is FINE and it is the whole design: it expires in 15 minutes and is
+// scoped to chat only. The real API_TOKEN never leaves the server.
+async function newSession() {
+  const res = await fetch(`${API}/session`, { method: "POST" });
+  if (!res.ok) throw new Error(`session failed: ${res.status}`);
+  const data = await res.json();
+  token = data.token;
+  status.textContent = `ready · expires in ${data.expires_in_minutes} min`;
+  input.disabled = send.disabled = false;
+  input.focus();
+}
+
+// ── rendering ──────────────────────────────────────────────────────────────
+function addMessage(who, cls) {
+  const el = document.createElement("div");
+  el.className = `msg ${cls}`;
+  el.innerHTML = `<div class="who">${who}</div><div class="body"></div>`;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el.querySelector(".body");
+}
+
+function addNote(text, cls = "tool") {
+  const el = document.createElement("div");
+  el.className = cls;
+  el.textContent = text;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+
+// ── asking ─────────────────────────────────────────────────────────────────
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const question = input.value.trim();
+  if (!question) return;
+
+  addMessage("you", "you").textContent = question;
+  input.value = "";
+  input.disabled = send.disabled = true;
+
+  // NOT EventSource. EventSource can only issue GET requests and cannot set
+  // headers, so it cannot carry the Authorization token or a POST body.
+  // fetch() + a stream reader is the way to consume SSE from a POST.
+  const res = await fetch(`${API}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify({ question }),
+  });
+
+  if (res.status === 401) {
+    addNote("Session expired. Reload the page.", "tool error");
+    status.textContent = "expired";
+    return;
+  }
+
+  let body = null;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE events are separated by a BLANK LINE. A chunk can split an event
+    // in half, so keep the remainder in the buffer until it completes.
+    const events = buffer.split("\n\n");
+    buffer = events.pop();
+
+    for (const raw of events) {
+      if (!raw.startsWith("data: ")) continue;
+      const ev = JSON.parse(raw.slice(6));
+
+      if (ev.type === "tool") {
+        addNote(`checking ${ev.name.replace(/_/g, " ")}…`);
+      } else if (ev.type === "token") {
+        if (!body) body = addMessage("assistant", "bot");
+        body.textContent += ev.text;
+        log.scrollTop = log.scrollHeight;
+      } else if (ev.type === "error") {
+        addNote(`Error: ${ev.message}`, "tool error");
+      } else if (ev.type === "done") {
+        addNote(`${ev.tokens_in} in / ${ev.tokens_out} out · ${ev.history} msgs in history`
+                + (ev.trimmed ? ` · trimmed ${ev.trimmed}` : ""), "meta");
+      }
+    }
+  }
+
+  input.disabled = send.disabled = false;
+  input.focus();
+});
+
+newSession().catch((err) => {
+  status.textContent = "offline";
+  addNote(`Could not start a session: ${err.message}`, "tool error");
+});
+</script>
+</body>
+</html>

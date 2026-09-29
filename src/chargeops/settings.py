@@ -31,5 +31,11 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-5-nano"
 
+    # Signs the short-lived browser tokens. A DIFFERENT secret from
+    # api_token: that one is a bearer credential, this one is a signing key,
+    # and reusing a secret across two purposes is how one leak becomes two.
+    jwt_secret: str = ""
+    browser_token_minutes: int = 15
+
 
 settings = Settings()

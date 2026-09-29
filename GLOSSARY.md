@@ -28,6 +28,12 @@ a paragraph, it belongs in a README day-note and this row should point at it.
 | **Quadratic cost growth** | Turn 20 re-bills turns 1–19. Cost grows with the square of conversation length. | D2 — ₹84 per 1,000 questions |
 | **Temperature** | Randomness. 0 for extraction and classification; higher for copy. | D2 |
 | **`max_completion_tokens`** | Ceiling on reasoning + visible output combined. The only way to bound unverifiable reasoning spend. | D2 |
+| **SSE is a text format, not a protocol** | `data: {...}` then a blank line, over ordinary HTTP. No handshake, no library. | D13 |
+| **SSE vs WebSocket** | One-way, plain HTTP, auto-reconnects, survives proxies — versus two-way with its own upgrade. | D13 |
+| **You cannot send a 500 once streaming starts** | Headers are already gone; a mid-stream failure can only be another event. | D13 |
+| **`EventSource` limits** | GET only, no custom headers — so it cannot carry a token. Use `fetch` + a stream reader. | D13 |
+| **Split SSE event** | A network chunk can cut an event in half. Keep the remainder in a buffer. Works locally, breaks in production. | D13 |
+| **`X-Accel-Buffering: no`** | nginx buffers a stream into one lump unless told not to. | D13 |
 | **Streaming / SSE** | A UX feature, not a speed one — it cuts time-to-first-token from ~8s to ~0.4s. | D2 |
 | **`stream_options={"include_usage": True}`** | Without it, a streamed response carries no token counts at all. | D2 — the cost line was impossible until this |
 | **Prompt caching** | Provider re-reads a stable prefix cheaply. Prefix match: one changed early byte invalidates everything after. | D2, mentioned |
@@ -72,6 +78,10 @@ a paragraph, it belongs in a README day-note and this row should point at it.
 | **Check/execute gap** | Execute the SQL **regenerated from the inspected tree**, so validator and executor cannot disagree. | D10 |
 | **Timing attack** | `secrets.compare_digest`, not `==`. A plain comparison leaks a secret one character at a time. | D8 |
 | **Bearer token** | Shared secret in an `Authorization` header. Static tokens cannot be scoped, expired or revoked per client. | D8 |
+| **Short-lived token** | A credential deliberately worthless to steal: 15 minutes, one narrow scope. Not "hide it well" but "make the exposed one not matter". | D13 |
+| **JWT** | Signed, NOT encrypted. Readable by anyone, changeable by nobody. Never put a secret in one. | D13 |
+| **Separate signing key from bearer credential** | Reuse one secret for both and a leak of either compromises both. | D13 |
+| **CORS / preflight** | A browser asks `OPTIONS` before a cross-origin call. Missing headers = the console blames CORS while nothing was ever sent. | D13 |
 | **Blast radius** | What a compromised or buggy component can reach. For an MCP client, the tool list. | D8 |
 | **Any name-based control fails when the other side chooses the names** | Masking keyed on column name; `SELECT driver_name AS city` defeated it entirely. | D11 |
 | **Filtering vs absence** | Don't hide the value — make it unreachable. A view plus REVOKE, not a mask. | D11 |
@@ -154,6 +164,7 @@ a paragraph, it belongs in a README day-note and this row should point at it.
 | **Provider seam** | One file imports the vendor SDK. Everything else calls my function. | D1 — held across five days of features |
 | **Event loop / async vs sync** | A blocking call in an `async` handler stalls the whole server, not one request. | D4 |
 | **Liveness vs readiness** | "The process answers" vs "the provider is reachable". | D4 — `/health` vs `/ready` |
+| **Shared connection, per-user state** | One MCP connection serves everyone (no per-user state in tool calls); the conversation is keyed per session. | D13 |
 | **Connection pool** | HikariCP. Built once, reused; here opened lazily so imports don't need a live database. | D6 |
 | **Fake / stub** | Replace a collaborator you don't own so tests are fast and deterministic. | D7 — a scripted model |
 | **Fixture** | JUnit `@BeforeEach` plus parameter injection. | D7 |
